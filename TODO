@@ -1,10 +1,11 @@
 1) Настроить соидинение с базой данных внутри Rust.
   a. Решить где будет жить бд: Докер, сама по себе, гибкий подход.
     1. Connect SQLite. +
+    2. Connect PostgreSQL.
 2) Создать бэк энд код для CRUD операций с базой. 
   a. Create operation. +
   b. Read operation. +
   c. Update operation. +
-  d. Delete operation.
+  d. Delete operation. +
 3) Создать пользовательский интерфейс.
   a. CLI.

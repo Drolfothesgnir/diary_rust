@@ -20,52 +20,82 @@ impl fmt::Display for Entry {
         writeln!(f, "-------------------------------------------")?;
 
         if let Some(date) = self.updated_at {
-            writeln!(f, "{}", date.format("%A, %B %-d, %Y %-I:%M %p"))?;
+            writeln!(f, "Updated at: {}", date.format("%A, %B %-d, %Y %-I:%M %p"))?;
         }
 
         Ok(())
     }
 }
 
-enum SortOrder {
+#[derive(Debug, Clone, Copy)]
+pub enum SortOrder {
     ASC,
     DESC,
 }
-
-struct SQLiteDiaryDB {
+#[derive(Debug)]
+pub struct SQLiteDiaryDB {
     pool: SqlitePool,
 }
 
 impl SQLiteDiaryDB {
+    // Instead of unwrap() in new(), consider propagating errors:
     async fn new(db_url: &str) -> Result<Self> {
-        if !Sqlite::database_exists(&db_url).await.unwrap_or(false) {
-            Sqlite::create_database(&db_url).await.unwrap();
-            match Self::create_schema(&db_url).await {
-                Ok(pool) => {
-                    println!("Database created successfully");
-                    return Ok(Self { pool });
-                }
-                Err(e) => panic!("Error while creating database: {}", e),
-            }
+        if !Sqlite::database_exists(&db_url).await? {
+            Sqlite::create_database(&db_url).await?;
+            let pool = Self::create_schema(&db_url).await?;
+            println!("Database created successfully");
+            return Ok(Self { pool });
         }
 
         let pool = SqlitePool::connect(db_url)
             .await
-            .context("Failed to connect to the database")
-            .unwrap();
+            .context("Failed to connect to the database")?;
 
         Ok(Self { pool })
     }
 
-    async fn create_entry(&self, content: &str, pinned: bool) -> Result<SqliteQueryResult> {
-        let qry = "INSERT INTO entries (content, pinned) VALUES($1, $2);";
-        let result = sqlx::query(qry)
+    async fn create_schema(db_url: &str) -> Result<SqlitePool> {
+        let pool = SqlitePool::connect(db_url)
+            .await
+            .context("Failed to connect to the database")?;
+
+        let qry = "
+            CREATE TABLE IF NOT EXISTS entries (
+                id         INTEGER PRIMARY KEY NOT NULL,
+                content    TEXT NOT NULL,
+                created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+                updated_at DATETIME DEFAULT (datetime('now')),
+                pinned     BOOLEAN NOT NULL DEFAULT 0
+            );
+
+            CREATE TRIGGER IF NOT EXISTS update_entries_updated_at
+            AFTER UPDATE ON entries
+            FOR EACH ROW
+            BEGIN
+                UPDATE entries
+                SET updated_at = datetime('now')
+                WHERE id = OLD.id;
+            END;
+        ";
+
+        sqlx::query(&qry)
+            .execute(&pool)
+            .await
+            .context("Failed to create database schema")?;
+
+        Ok(pool)
+    }
+
+    async fn create_entry(&self, content: &str, pinned: bool) -> Result<Entry> {
+        let qry = "INSERT INTO entries (content, pinned) VALUES($1, $2) RETURNING *;";
+        let result = sqlx::query_as::<_, Entry>(qry)
             .bind(content)
             .bind(pinned)
-            .execute(&self.pool)
+            .fetch_one(&self.pool)
             .await
-            .context("Failed to create an entry");
-        return result;
+            .context("Failed to create an entry")?;
+        println!("New entry created.");
+        Ok(result)
     }
 
     async fn read_entries(
@@ -78,6 +108,11 @@ impl SQLiteDiaryDB {
     ) -> Result<Vec<Entry>> {
         let page = page.unwrap_or(1);
         let per_page = per_page.unwrap_or(10);
+
+        // Add validation for page and per_page in read_entries
+        if page < 1 || per_page < 1 {
+            return Err(anyhow::anyhow!("Page and per_page must be positive"));
+        }
         let sort = sort.unwrap_or(SortOrder::DESC);
 
         let order = match sort {
@@ -85,34 +120,47 @@ impl SQLiteDiaryDB {
             SortOrder::DESC => "DESC",
         };
 
-        let skip = (page - 1) * per_page;
+        let offset = (page - 1) * per_page;
+
+        let mut query = String::from("SELECT * FROM entries");
         let mut conditions = Vec::new();
+        let mut param_count = 0;
+
+        if pinned.is_some() {
+            param_count += 1;
+            conditions.push(format!("pinned = ${}", param_count));
+        }
+
+        if substring.is_some() {
+            param_count += 1;
+            conditions.push(format!("content LIKE ${}", param_count));
+        }
+
+        if !conditions.is_empty() {
+            query.push_str(" WHERE ");
+            query.push_str(&conditions.join(" AND "));
+        }
+
+        query.push_str(&format!(
+            " ORDER BY created_at {0}, id {0} LIMIT ${1} OFFSET ${2};",
+            order,
+            param_count + 1,
+            param_count + 2
+        ));
+
+        let mut query_builder = sqlx::query_as::<_, Entry>(&query);
+
         if let Some(is_pinned) = pinned {
-            conditions.push(format!("pinned = {}", is_pinned));
+            query_builder = query_builder.bind(is_pinned);
         }
+
         if let Some(substr) = substring {
-            conditions.push(format!("content LIKE '%{}%'", substr));
+            query_builder = query_builder.bind(format!("%{}%", substr));
         }
 
-        let where_clause = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!("WHERE {}", conditions.join(" AND "))
-        };
-
-        let qry = format!(
-            "
-            SELECT * FROM entries
-            {}
-            ORDER BY created_at {}, id {}
-            LIMIT $1 OFFSET $2;
-        ",
-            where_clause, order, order
-        );
-
-        sqlx::query_as::<_, Entry>(&qry)
+        query_builder
             .bind(per_page)
-            .bind(skip)
+            .bind(offset)
             .fetch_all(&self.pool)
             .await
             .context("Failed to read entries")
@@ -176,44 +224,24 @@ impl SQLiteDiaryDB {
             query_builder = query_builder.bind(new_pinned);
         }
 
+        println!("Entry with id: {} updated.", id);
+
         query_builder
             .fetch_one(&self.pool)
             .await
             .context(format!("Failed to update an entry with id: {}", id))
     }
 
-    async fn create_schema(db_url: &str) -> Result<SqlitePool> {
-        let pool = SqlitePool::connect(db_url)
+    async fn delete_entry(&self, id: i64) -> Result<SqliteQueryResult> {
+        let qry = "DELETE FROM entries WHERE id = $1";
+        let result = sqlx::query(&qry)
+            .bind(id)
+            .execute(&self.pool)
             .await
-            .context("Failed to connect to the database")
-            .unwrap();
+            .context(format!("Failed to delete entry with id: {}", id))?;
+        println!("Entry with id: {} deleted.", id);
 
-        let qry = "
-            CREATE TABLE IF NOT EXISTS entries (
-                id         INTEGER PRIMARY KEY NOT NULL,
-                content    TEXT NOT NULL,
-                created_at DATETIME NOT NULL DEFAULT (datetime('now')),
-                updated_at DATETIME DEFAULT (datetime('now')),
-                pinned     BOOLEAN NOT NULL DEFAULT 0
-            );
-
-            CREATE TRIGGER IF NOT EXISTS update_entries_updated_at
-            AFTER UPDATE ON entries
-            FOR EACH ROW
-            BEGIN
-                UPDATE entries
-                SET updated_at = datetime('now')
-                WHERE id = OLD.id;
-            END;
-        ";
-
-        sqlx::query(&qry)
-            .execute(&pool)
-            .await
-            .context("Failed to create database schema")
-            .unwrap();
-
-        return Ok(pool);
+        Ok(result)
     }
 
     async fn close(&self) {
@@ -225,17 +253,15 @@ impl SQLiteDiaryDB {
 #[tokio::main]
 async fn main() -> Result<()> {
     let db_url = String::from("sqlite://sqlite.db");
-    let db = SQLiteDiaryDB::new(&db_url).await.unwrap();
+    let db = SQLiteDiaryDB::new(&db_url).await?;
 
-    let entry = db.read_entry(1).await.unwrap();
-    println!("{}", entry);
+    let entries = db
+        .read_entries(None, None, None, Some(true), Some("ell"))
+        .await?;
 
-    let updated_entry = db
-        .update_entry(10, Some(String::from("Update for id 10")), Some(true))
-        .await
-        .unwrap();
-
-    println!("{}", updated_entry);
+    for entry in entries {
+        println!("{}", entry);
+    }
 
     db.close().await;
 
