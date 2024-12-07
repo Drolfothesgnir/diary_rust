@@ -166,6 +166,16 @@ impl SQLiteDiaryDB {
             .context("Failed to read entries")
     }
 
+    async fn check_if_entry_exists(&self, id: i64) -> Result<bool> {
+        let result = sqlx::query("SELECT 1 FROM entries WHERE id = $1;")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await
+            .context(format!("Failed to check if entry with id: {} exists", id))?;
+
+        Ok(result.is_some())
+    }
+
     async fn read_entry(&self, id: i64) -> Result<Entry> {
         let qry = "
             SELECT * FROM entries
@@ -185,6 +195,12 @@ impl SQLiteDiaryDB {
         content: Option<String>,
         pinned: Option<bool>,
     ) -> Result<Entry> {
+        let entry_exists = self.check_if_entry_exists(id).await?;
+
+        if !entry_exists {
+            return Err(anyhow::anyhow!("Entry with id: {} doesn't exist", id));
+        }
+
         let mut query_parts = Vec::new();
         let mut param_count = 1;
 
@@ -233,6 +249,12 @@ impl SQLiteDiaryDB {
     }
 
     async fn delete_entry(&self, id: i64) -> Result<SqliteQueryResult> {
+        let entry_exists = self.check_if_entry_exists(id).await?;
+
+        if !entry_exists {
+            return Err(anyhow::anyhow!("Entry with id: {} doesn't exist", id));
+        }
+
         let qry = "DELETE FROM entries WHERE id = $1";
         let result = sqlx::query(&qry)
             .bind(id)
