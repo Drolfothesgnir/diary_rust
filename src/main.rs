@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
 use sqlx::{migrate::MigrateDatabase, sqlite::SqliteQueryResult, Sqlite, SqlitePool};
+use std::fmt;
 
 #[derive(Debug, sqlx::FromRow)]
 struct Entry {
@@ -9,6 +10,21 @@ struct Entry {
     created_at: NaiveDateTime,
     updated_at: Option<NaiveDateTime>,
     pinned: bool,
+}
+
+impl fmt::Display for Entry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "{}", self.created_at.format("%A, %B %-d, %Y %-I:%M %p"))?;
+        writeln!(f, "-------------------------------------------")?;
+        writeln!(f, "{}", self.content)?;
+        writeln!(f, "-------------------------------------------")?;
+
+        if let Some(date) = self.updated_at {
+            writeln!(f, "{}", date.format("%A, %B %-d, %Y %-I:%M %p"))?;
+        }
+
+        Ok(())
+    }
 }
 
 enum SortOrder {
@@ -102,6 +118,70 @@ impl SQLiteDiaryDB {
             .context("Failed to read entries")
     }
 
+    async fn read_entry(&self, id: i64) -> Result<Entry> {
+        let qry = "
+            SELECT * FROM entries
+            WHERE id = $1;
+        ";
+
+        sqlx::query_as::<_, Entry>(&qry)
+            .bind(id)
+            .fetch_one(&self.pool)
+            .await
+            .context(format!("Failed to read entry with id: {}", id))
+    }
+
+    async fn update_entry(
+        &self,
+        id: i64,
+        content: Option<String>,
+        pinned: Option<bool>,
+    ) -> Result<Entry> {
+        let mut query_parts = Vec::new();
+        let mut param_count = 1;
+
+        if content.is_some() {
+            param_count += 1;
+            query_parts.push(format!("content = ${}", param_count));
+        }
+
+        if pinned.is_some() {
+            param_count += 1;
+            query_parts.push(format!("pinned = ${}", param_count));
+        }
+
+        if content.is_none() && pinned.is_none() {
+            return Err(anyhow::anyhow!(
+                "At least one field must be provided for update"
+            ));
+        }
+
+        let qry = format!(
+            "
+            UPDATE entries
+            SET {}
+            WHERE id = $1
+            RETURNING *;
+        ",
+            query_parts.join(", ")
+        );
+
+        let mut query_builder = sqlx::query_as::<_, Entry>(&qry).bind(id);
+
+        if let Some(new_content) = content {
+            query_builder = query_builder.bind(new_content);
+        }
+
+        if let Some(new_pinned) = pinned {
+            query_builder = query_builder.bind(new_pinned);
+        }
+
+        query_builder
+            .fetch_one(&self.pool)
+            .await
+            .context(format!("Failed to update an entry with id: {}", id))
+    }
+
     async fn create_schema(db_url: &str) -> Result<SqlitePool> {
         let pool = SqlitePool::connect(db_url)
             .await
@@ -136,7 +216,7 @@ impl SQLiteDiaryDB {
         return Ok(pool);
     }
 
-    async fn cleanup(&self) {
+    async fn close(&self) {
         self.pool.close().await;
         println!("\nDatabase connection closed\n")
     }
@@ -147,11 +227,17 @@ async fn main() -> Result<()> {
     let db_url = String::from("sqlite://sqlite.db");
     let db = SQLiteDiaryDB::new(&db_url).await.unwrap();
 
-    let entries = db.read_entries(None, None, None, None, Some("ed")).await;
+    let entry = db.read_entry(1).await.unwrap();
+    println!("{}", entry);
 
-    print!("{:?}", entries);
+    let updated_entry = db
+        .update_entry(10, Some(String::from("Update for id 10")), Some(true))
+        .await
+        .unwrap();
 
-    db.cleanup().await;
+    println!("{}", updated_entry);
+
+    db.close().await;
 
     Ok(())
 }
