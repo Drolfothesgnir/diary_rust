@@ -25,3 +25,47 @@ impl fmt::Display for Entry {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDateTime;
+
+    #[test]
+    fn test_display_without_updated_at() {
+        let entry = Entry {
+            id: 1,
+            content: "Hello test".to_string(),
+            created_at: NaiveDateTime::parse_from_str("2024-01-01 14:30:00", "%Y-%m-%d %H:%M:%S")
+                .unwrap(),
+            updated_at: None,
+            pinned: false,
+        };
+
+        let actual_output = entry.to_string();
+        let expected_output = "Monday, January 1, 2024 2:30 PM\n-------------------------------------------\nHello test\n-------------------------------------------\n"
+            .to_string();
+
+        assert_eq!(actual_output, expected_output)
+    }
+
+    #[test]
+    fn test_display_with_updated_at() {
+        let entry = Entry {
+            id: 1,
+            content: "Hello test".to_string(),
+            created_at: NaiveDateTime::parse_from_str("2024-01-01 14:30:00", "%Y-%m-%d %H:%M:%S")
+                .unwrap(),
+            updated_at: Some(
+                NaiveDateTime::parse_from_str("2025-02-02 14:30:00", "%Y-%m-%d %H:%M:%S").unwrap(),
+            ),
+            pinned: false,
+        };
+
+        let actual_output = entry.to_string();
+        let expected_output = "Monday, January 1, 2024 2:30 PM\n-------------------------------------------\nHello test\n-------------------------------------------\nUpdated at: Sunday, February 2, 2025 2:30 PM\n"
+            .to_string();
+
+        assert_eq!(actual_output, expected_output)
+    }
+}
