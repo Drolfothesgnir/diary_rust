@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use sqlx::{migrate::MigrateDatabase, sqlite::SqliteQueryResult, Sqlite, SqlitePool};
 
 pub struct SQLiteDiaryDB {
-    pool: SqlitePool,
+    pub pool: SqlitePool,
 }
 
 impl SQLiteDiaryDB {

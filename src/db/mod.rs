@@ -1,4 +1,5 @@
 pub mod sqlite;
+pub mod tests_sqlite;
 
 #[derive(Debug, Clone, Copy)]
 pub enum SortOrder {
