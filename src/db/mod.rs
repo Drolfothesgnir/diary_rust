@@ -1,3 +1,4 @@
+pub mod postgres;
 pub mod sqlite;
 pub mod tests_sqlite;
 
@@ -8,4 +9,5 @@ pub enum SortOrder {
 }
 
 // Re-export the types you want available at the db module level
+pub use self::postgres::PostgresDiaryDB;
 pub use self::sqlite::SQLiteDiaryDB;

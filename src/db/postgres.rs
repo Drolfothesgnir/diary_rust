@@ -1,58 +1,132 @@
+use std::str::FromStr;
+
 use super::SortOrder;
 use crate::models::Entry;
 use anyhow::{Context, Result};
-use sqlx::{migrate::MigrateDatabase, sqlite::SqliteQueryResult, Sqlite, SqlitePool};
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use sqlx::{ConnectOptions, PgPool};
 
-pub struct SQLiteDiaryDB {
-    pub pool: SqlitePool,
+pub struct PostgresDiaryDB {
+    pub pool: PgPool,
 }
 
-impl SQLiteDiaryDB {
+impl PostgresDiaryDB {
     pub async fn new(db_url: &str) -> Result<Self> {
-        if !Sqlite::database_exists(&db_url).await? {
-            Sqlite::create_database(&db_url).await?;
-            let pool = Self::create_schema(&db_url).await?;
+        // Parse the connection string to get database name
+        let opts = PgConnectOptions::from_str(db_url).context("Invalid database URL")?;
+        let db_name = opts
+            .get_database()
+            .ok_or_else(|| anyhow::anyhow!("Database name not specified in URL"))?;
+
+        // Create a connection to postgres database to check if our db exists
+        let postgres_url = db_url.replace(db_name, "postgres");
+        let postgres_pool = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&postgres_url)
+            .await
+            .context("Failed to connect to postgres database")?;
+
+        // Check if database exists
+        let row: Option<(bool,)> =
+            sqlx::query_as("SELECT TRUE FROM pg_database WHERE datname = $1")
+                .bind(db_name)
+                .fetch_optional(&postgres_pool)
+                .await
+                .context("Failed to check if database exists")?;
+
+        // Create database if it doesn't exist
+        if row.is_none() {
+            sqlx::query(&format!("CREATE DATABASE \"{}\";", db_name))
+                .execute(&postgres_pool)
+                .await
+                .context("Failed to create database")?;
             println!("Database created successfully");
-            return Ok(Self { pool });
         }
 
-        let pool = SqlitePool::connect(db_url)
+        // Close connection to postgres database
+        postgres_pool.close().await;
+
+        // Connect to the target database
+        let pool = PgPoolOptions::new()
+            .max_connections(5)
+            .connect(db_url)
             .await
             .context("Failed to connect to the database")?;
+
+        // Create schema
+        Self::create_schema(&pool).await?;
+        println!("Database connected successfully");
 
         Ok(Self { pool })
     }
 
-    pub async fn create_schema(db_url: &str) -> Result<SqlitePool> {
-        let pool = SqlitePool::connect(db_url)
+    async fn create_schema(pool: &PgPool) -> Result<()> {
+        // Drop existing trigger and function first
+        let drop_trigger = "DROP TRIGGER IF EXISTS update_entries_updated_at ON entries;";
+        let drop_function = "DROP FUNCTION IF EXISTS update_updated_at_column();";
+
+        // Create table with TIMESTAMPTZ
+        let create_table = "
+            CREATE TABLE IF NOT EXISTS entries (
+                id         BIGSERIAL PRIMARY KEY,
+                content    TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ,
+                pinned     BOOLEAN NOT NULL DEFAULT FALSE
+            );";
+
+        // Create update function
+        let create_function = "
+            CREATE OR REPLACE FUNCTION update_updated_at_column()
+            RETURNS TRIGGER AS $$
+            BEGIN
+                IF NEW.* IS DISTINCT FROM OLD.* THEN
+                    NEW.updated_at = CURRENT_TIMESTAMP;
+                END IF;
+                RETURN NEW;
+            END;
+            $$ language 'plpgsql';";
+
+        // Create trigger
+        let create_trigger = "
+            CREATE TRIGGER update_entries_updated_at
+                BEFORE UPDATE ON entries
+                FOR EACH ROW
+                EXECUTE FUNCTION update_updated_at_column();";
+
+        // Set timezone to UTC for the database connection
+        sqlx::query("SET TIME ZONE 'UTC';")
+            .execute(pool)
             .await
-            .context("Failed to connect to the database")?;
+            .context("Failed to set timezone")?;
 
-        let qry = "
-          CREATE TABLE IF NOT EXISTS entries (
-              id         INTEGER PRIMARY KEY NOT NULL,
-              content    TEXT NOT NULL,
-              created_at DATETIME NOT NULL DEFAULT (datetime('now')),
-              updated_at DATETIME DEFAULT (datetime('now')),
-              pinned     BOOLEAN NOT NULL DEFAULT 0
-          );
-
-          CREATE TRIGGER IF NOT EXISTS update_entries_updated_at
-          AFTER UPDATE ON entries
-          FOR EACH ROW
-          BEGIN
-              UPDATE entries
-              SET updated_at = datetime('now')
-              WHERE id = OLD.id;
-          END;
-      ";
-
-        sqlx::query(&qry)
-            .execute(&pool)
+        // Execute each query in order
+        sqlx::query(drop_trigger)
+            .execute(pool)
             .await
-            .context("Failed to create database schema")?;
+            .context("Failed to drop old trigger")?;
 
-        Ok(pool)
+        sqlx::query(drop_function)
+            .execute(pool)
+            .await
+            .context("Failed to drop old function")?;
+
+        sqlx::query(create_table)
+            .execute(pool)
+            .await
+            .context("Failed to create table")?;
+
+        sqlx::query(create_function)
+            .execute(pool)
+            .await
+            .context("Failed to create update function")?;
+
+        sqlx::query(create_trigger)
+            .execute(pool)
+            .await
+            .context("Failed to create trigger")?;
+
+        Ok(())
     }
 
     pub async fn create_entry(&self, content: &str, pinned: bool) -> Result<Entry> {
@@ -78,7 +152,6 @@ impl SQLiteDiaryDB {
         let page = page.unwrap_or(1);
         let per_page = per_page.unwrap_or(10);
 
-        // Add validation for page and per_page in read_entries
         if page < 1 || per_page < 1 {
             return Err(anyhow::anyhow!("Page and per_page must be positive"));
         }
@@ -102,7 +175,7 @@ impl SQLiteDiaryDB {
 
         if substring.is_some() {
             param_count += 1;
-            conditions.push(format!("content LIKE ${}", param_count));
+            conditions.push(format!("content ILIKE ${}", param_count)); // Note: Using ILIKE for case-insensitive search
         }
 
         if !conditions.is_empty() {
@@ -146,12 +219,9 @@ impl SQLiteDiaryDB {
     }
 
     pub async fn read_entry(&self, id: i64) -> Result<Entry> {
-        let qry = "
-          SELECT * FROM entries
-          WHERE id = $1;
-      ";
+        let qry = "SELECT * FROM entries WHERE id = $1;";
 
-        sqlx::query_as::<_, Entry>(&qry)
+        sqlx::query_as::<_, Entry>(qry)
             .bind(id)
             .fetch_one(&self.pool)
             .await
@@ -190,12 +260,7 @@ impl SQLiteDiaryDB {
         }
 
         let qry = format!(
-            "
-          UPDATE entries
-          SET {}
-          WHERE id = $1
-          RETURNING *;
-      ",
+            "UPDATE entries SET {} WHERE id = $1 RETURNING *;",
             query_parts.join(", ")
         );
 
@@ -225,13 +290,13 @@ impl SQLiteDiaryDB {
         }
 
         let qry = "DELETE FROM entries WHERE id = $1";
-        sqlx::query(&qry)
+        sqlx::query(qry)
             .bind(id)
             .execute(&self.pool)
             .await
             .context(format!("Failed to delete entry with id: {}", id))?;
-        println!("Entry with id: {} deleted.", id);
 
+        println!("Entry with id: {} deleted.", id);
         Ok(())
     }
 
