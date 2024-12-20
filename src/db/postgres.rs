@@ -4,7 +4,7 @@ use super::SortOrder;
 use crate::models::Entry;
 use anyhow::{Context, Result};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
-use sqlx::{ConnectOptions, PgPool};
+use sqlx::PgPool;
 
 pub struct PostgresDiaryDB {
     pub pool: PgPool,
@@ -129,7 +129,7 @@ impl PostgresDiaryDB {
         Ok(())
     }
 
-    pub async fn create_entry(&self, content: &str, pinned: bool) -> Result<Entry> {
+    pub async fn create_entry(&self, content: String, pinned: bool) -> Result<Entry> {
         let qry = "INSERT INTO entries (content, pinned) VALUES($1, $2) RETURNING *;";
         let result = sqlx::query_as::<_, Entry>(qry)
             .bind(content)
@@ -147,7 +147,7 @@ impl PostgresDiaryDB {
         per_page: Option<i64>,
         sort: Option<SortOrder>,
         pinned: Option<bool>,
-        substring: Option<&str>,
+        substring: Option<String>,
     ) -> Result<Vec<Entry>> {
         let page = page.unwrap_or(1);
         let per_page = per_page.unwrap_or(10);

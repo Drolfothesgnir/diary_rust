@@ -14,9 +14,12 @@ mod tests {
     async fn create_sample_entries(db: &SQLiteDiaryDB) -> Result<Vec<Entry>> {
         let mut entries = Vec::new();
 
-        entries.push(db.create_entry("First entry", true).await?);
-        entries.push(db.create_entry("Second entry", false).await?);
-        entries.push(db.create_entry("Third pinned entry", true).await?);
+        entries.push(db.create_entry("First entry".to_string(), true).await?);
+        entries.push(db.create_entry("Second entry".to_string(), false).await?);
+        entries.push(
+            db.create_entry("Third pinned entry".to_string(), true)
+                .await?,
+        );
 
         Ok(entries)
     }
@@ -32,7 +35,7 @@ mod tests {
         let pinned = true;
 
         let created_entry = db
-            .create_entry(content, pinned)
+            .create_entry(content.to_string(), pinned)
             .await
             .expect("Failed to create entry");
 
@@ -78,7 +81,7 @@ mod tests {
 
         // Test substring search
         let search = db
-            .read_entries(None, None, None, None, Some("Second"))
+            .read_entries(None, None, None, None, Some("Second".to_string()))
             .await
             .expect("Failed to read entries");
         assert_eq!(search.len(), 1);
@@ -102,7 +105,7 @@ mod tests {
         let db = SQLiteDiaryDB { pool };
 
         let entry = db
-            .create_entry("Test entry", false)
+            .create_entry("Test entry".to_string(), false)
             .await
             .expect("Failed to create entry");
 
@@ -127,7 +130,7 @@ mod tests {
         let db = SQLiteDiaryDB { pool };
 
         let entry = db
-            .create_entry("Original content", false)
+            .create_entry("Original content".to_string(), false)
             .await
             .expect("Failed to create entry");
 
@@ -176,7 +179,7 @@ mod tests {
         let db = SQLiteDiaryDB { pool };
 
         let entry = db
-            .create_entry("To be deleted", false)
+            .create_entry("To be deleted".to_string(), false)
             .await
             .expect("Failed to create entry");
 

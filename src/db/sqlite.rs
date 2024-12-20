@@ -1,8 +1,7 @@
 use super::SortOrder;
 use crate::models::Entry;
 use anyhow::{Context, Result};
-use sqlx::{migrate::MigrateDatabase, sqlite::SqliteQueryResult, Sqlite, SqlitePool};
-
+use sqlx::{migrate::MigrateDatabase, Sqlite, SqlitePool};
 pub struct SQLiteDiaryDB {
     pub pool: SqlitePool,
 }
@@ -55,7 +54,7 @@ impl SQLiteDiaryDB {
         Ok(pool)
     }
 
-    pub async fn create_entry(&self, content: &str, pinned: bool) -> Result<Entry> {
+    pub async fn create_entry(&self, content: String, pinned: bool) -> Result<Entry> {
         let qry = "INSERT INTO entries (content, pinned) VALUES($1, $2) RETURNING *;";
         let result = sqlx::query_as::<_, Entry>(qry)
             .bind(content)
@@ -73,7 +72,7 @@ impl SQLiteDiaryDB {
         per_page: Option<i64>,
         sort: Option<SortOrder>,
         pinned: Option<bool>,
-        substring: Option<&str>,
+        substring: Option<String>,
     ) -> Result<Vec<Entry>> {
         let page = page.unwrap_or(1);
         let per_page = per_page.unwrap_or(10);

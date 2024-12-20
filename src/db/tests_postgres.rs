@@ -1,7 +1,5 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use crate::db::PostgresDiaryDB;
     use crate::db::SortOrder;
     use crate::models::Entry;
@@ -13,7 +11,6 @@ mod tests {
     const POSTGRES_URL: &str = "postgres://postgres:password@localhost:5432/postgres";
 
     struct TestDB {
-        url: String,
         db_name: String,
     }
 
@@ -38,13 +35,7 @@ mod tests {
 
             let db = PostgresDiaryDB::new(&test_db_url).await?;
 
-            Ok((
-                Self {
-                    url: test_db_url,
-                    db_name,
-                },
-                db,
-            ))
+            Ok((Self { db_name }, db))
         }
 
         async fn cleanup(&self) -> Result<()> {
@@ -68,9 +59,12 @@ mod tests {
     async fn create_sample_entries(db: &PostgresDiaryDB) -> Result<Vec<Entry>> {
         let mut entries = Vec::new();
 
-        entries.push(db.create_entry("First entry", true).await?);
-        entries.push(db.create_entry("Second entry", false).await?);
-        entries.push(db.create_entry("Third pinned entry", true).await?);
+        entries.push(db.create_entry("First entry".to_string(), true).await?);
+        entries.push(db.create_entry("Second entry".to_string(), false).await?);
+        entries.push(
+            db.create_entry("Third pinned entry".to_string(), true)
+                .await?,
+        );
 
         Ok(entries)
     }
@@ -83,7 +77,7 @@ mod tests {
         let pinned = true;
 
         let created_entry = db
-            .create_entry(content, pinned)
+            .create_entry(content.to_string(), pinned)
             .await
             .expect("Failed to create entry");
 
@@ -129,7 +123,7 @@ mod tests {
 
         // Test substring search
         let search = db
-            .read_entries(None, None, None, None, Some("Second"))
+            .read_entries(None, None, None, None, Some("Second".to_string()))
             .await
             .expect("Failed to read entries");
         assert_eq!(search.len(), 1);
@@ -153,7 +147,7 @@ mod tests {
         let (test_db, db) = TestDB::new().await?;
 
         let entry = db
-            .create_entry("Test entry", false)
+            .create_entry("Test entry".to_string(), false)
             .await
             .expect("Failed to create entry");
 
@@ -178,7 +172,7 @@ mod tests {
         let (test_db, db) = TestDB::new().await?;
 
         let entry = db
-            .create_entry("Original content", false)
+            .create_entry("Original content".to_string(), false)
             .await
             .expect("Failed to create entry");
 
@@ -227,7 +221,7 @@ mod tests {
         let (test_db, db) = TestDB::new().await?;
 
         let entry = db
-            .create_entry("To be deleted", false)
+            .create_entry("To be deleted".to_string(), false)
             .await
             .expect("Failed to create entry");
 
@@ -256,7 +250,7 @@ mod tests {
         let (test_db, db) = TestDB::new().await?;
 
         // Create an entry and immediately read it back
-        let entry = db.create_entry("Test entry", false).await?;
+        let entry = db.create_entry("Test entry".to_string(), false).await?;
         let read_entry = db.read_entry(entry.id).await?;
 
         // Check that created_at is preserved correctly
