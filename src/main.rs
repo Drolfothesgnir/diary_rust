@@ -5,7 +5,7 @@ mod models;
 
 use anyhow::Result;
 use clap::Parser;
-use cli::{create_entry, delete_entry, read_entry, update_entry, Args, Mode};
+use cli::{process_args, Args};
 use config::{Config, DEFAULT_DB_URL};
 use db::DiaryDB;
 
@@ -33,12 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("{:?}", config);
     let diary_db = DiaryDB::new(&config.db_url).await?;
 
-    match args.mode {
-        Mode::Create => create_entry(&diary_db, args).await?,
-        Mode::Read => read_entry(&diary_db, args).await?,
-        Mode::Delete => delete_entry(&diary_db, args).await?,
-        Mode::Update => update_entry(&diary_db, args).await?,
-    }
+    process_args(&diary_db, args).await?;
 
     diary_db.db.close().await;
     Ok(())

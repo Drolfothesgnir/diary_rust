@@ -116,3 +116,14 @@ pub async fn update_entry(db: &DiaryDB, args: Args) -> Result<()> {
 
     Ok(())
 }
+
+pub async fn process_args(db: &DiaryDB, args: Args) -> Result<()> {
+    match args.mode {
+        Mode::Create => create_entry(db, args).await?,
+        Mode::Read => read_entry(db, args).await?,
+        Mode::Delete => delete_entry(db, args).await?,
+        Mode::Update => update_entry(db, args).await?,
+    }
+
+    Ok(())
+}

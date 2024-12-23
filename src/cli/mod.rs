@@ -1,2 +1,2 @@
 mod cli;
-pub use cli::{create_entry, delete_entry, read_entry, update_entry, Args, Mode};
+pub use cli::{process_args, Args, Mode};

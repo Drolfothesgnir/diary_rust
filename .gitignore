@@ -1,6 +1,7 @@
 /target
 
 .env
+*.sql
 *.db
 *.db-shm
 *.db-wal
