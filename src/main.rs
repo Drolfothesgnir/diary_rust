@@ -1,13 +1,8 @@
 mod cli;
-mod config;
-mod db;
-mod models;
-
 use anyhow::Result;
 use clap::Parser;
 use cli::{process_args, Args};
-use config::{Config, DEFAULT_DB_URL};
-use db::DiaryDB;
+use diary_core::{Config, DiaryDB, DEFAULT_DB_URL};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

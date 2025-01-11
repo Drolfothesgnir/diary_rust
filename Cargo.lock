@@ -379,6 +379,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "diary-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "clap",
+ "dotenv",
+ "rust-ini",
+ "sqlx",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1242,14 +1257,9 @@ name = "rust_diary"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
- "chrono",
  "clap",
- "dotenv",
- "rust-ini",
- "sqlx",
+ "diary-core",
  "tokio",
- "uuid",
 ]
 
 [[package]]

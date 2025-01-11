@@ -1,10 +1,10 @@
 use clap::{Parser, ValueEnum};
 
-use crate::{
+use anyhow::{Error, Result};
+use diary_core::{
     db::{DiaryDB, SortOrder},
     models::Entry,
 };
-use anyhow::{Error, Result};
 
 #[derive(Debug, Clone, ValueEnum)]
 pub enum Mode {
