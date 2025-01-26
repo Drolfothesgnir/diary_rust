@@ -1,2 +1,2 @@
 mod cli;
-pub use cli::{process_args, Args, Mode};
+pub use cli::{process_args, Args};

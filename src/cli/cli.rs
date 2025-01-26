@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use clap::{Parser, ValueEnum};
 
 use anyhow::{Error, Result};
@@ -16,6 +18,8 @@ pub enum Mode {
     Update,
     #[value(name = "d")]
     Delete,
+    #[value(name = "a")]
+    DumpAll,
 }
 
 #[derive(Parser, Debug)]
@@ -48,6 +52,9 @@ pub struct Args {
 
     #[arg(long)]
     pub substr: Option<String>,
+
+    #[arg(long)]
+    pub path: Option<String>,
 }
 
 fn print_entries(entries: Vec<Entry>) {
@@ -117,12 +124,26 @@ pub async fn update_entry(db: &DiaryDB, args: Args) -> Result<()> {
     Ok(())
 }
 
+pub async fn dump_entries(db: &DiaryDB, args: Args) -> Result<()> {
+    match args.path {
+        Some(p) => {
+            db.db.dump_entries(Some(&PathBuf::from(p))).await?;
+        }
+        None => {
+            db.db.dump_entries(None).await?;
+        }
+    };
+
+    Ok(())
+}
+
 pub async fn process_args(db: &DiaryDB, args: Args) -> Result<()> {
     match args.mode {
         Mode::Create => create_entry(db, args).await?,
         Mode::Read => read_entry(db, args).await?,
         Mode::Delete => delete_entry(db, args).await?,
         Mode::Update => update_entry(db, args).await?,
+        Mode::DumpAll => dump_entries(db, args).await?,
     }
 
     Ok(())
